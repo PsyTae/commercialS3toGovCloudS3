@@ -7,32 +7,59 @@
 }
  */
 
-const arg = require('arg');
 const EventEmitter = require('events');
 class DownloadEmitter extends EventEmitter {}
-const { auto, queue, doWhilst, each } = require('async');
-const { v4: uuidv4 } = require('uuid');
+class UploadEmitter extends EventEmitter {}
 const { tmpdir } = require('os');
-const aws = require('aws-sdk');
-const fs = require('fs-extra');
 const { basename, join } = require('path');
-const s3Upload = require('s3-upload-resume');
+const { spawn } = require('child_process');
+const arg = require('arg');
+const { auto, queue, doWhilst, each, eachSeries } = require('async');
+const { v4: uuidv4 } = require('uuid');
+const aws = require('aws-sdk');
+const { createWriteStream, mkdir, remove } = require('fs-extra');
 const inquirer = require('inquirer');
 const sqlite3 = require('sqlite3').verbose();
 
 const commCreds = new aws.Credentials(require('./commercialCreds.json'));
-const govCreds = new aws.Credentials(require('./govCreds.json'));
-
-const govEndPoint = new aws.Endpoint('s3-fips.us-gov-east-1.amazonaws.com');
 
 const commS3 = new aws.S3({ apiVersion: '2006-03-01', region: 'us-east-1', signatureVersion: 'v4', credentials: commCreds });
-const govS3 = new aws.S3({ apiVersion: '2006-03-01', region: 'us-gov-east-1', endpoint: govEndPoint, signatureVersion: 'v4', credentials: govCreds });
 
-const s3UploadClient = s3Upload.createClient({
-    multipartUploadThreshold: 5 * 1024 * 1024,
-    multipartUploadSize: 5 * 1024 * 1024,
-    s3Client: govS3,
-});
+let upload = false;
+const uploadEmitter = new UploadEmitter();
+
+// const uploadEmitter = new UploadEmitter();
+const startUpload = () => {
+    upload = spawn('node', [join(__dirname, 'upload.js')], {
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+        windowsHide: true,
+    });
+    upload.stdout.on('data', (data) => console.log('[upload]', data.toString()));
+    upload.stderr.on('data', (data) => console.error('[upload]', data.toString()));
+
+    upload.on('message', (msg) => {
+        uploadEmitter.emit(msg.uuid, msg.callback);
+        // uploadQ.resume();
+    });
+
+    upload.on('close', (code, signal) => {
+        if (signal === 'SIGINT') {
+            console.log(`Upload process killed.  Finished Successfully`);
+        } else if (code) {
+            console.error(`Upload process closed with exit code ${code}`);
+            return process.exit(code);
+        } else {
+            console.error(`Upload process closed unexpectedly code: ${code}, signal ${signal}`);
+        }
+    });
+};
+
+const killUpload = () => {
+    if (upload) {
+        upload.kill('SIGINT');
+        upload = false;
+    }
+};
 
 const downloadQ = queue((task, cb) => {
     const downloadEmitter = new DownloadEmitter();
@@ -42,7 +69,7 @@ const downloadQ = queue((task, cb) => {
         Bucket: task.s3Bucket,
         Key: task.s3Key,
     };
-    const fileStream = fs.createWriteStream(task.downloadPath);
+    const fileStream = createWriteStream(task.downloadPath);
     const s3Stream = commS3.getObject(params).createReadStream();
 
     s3Stream.on('error', (err) => downloadEmitter.emit('error', err));
@@ -51,26 +78,6 @@ const downloadQ = queue((task, cb) => {
         .pipe(fileStream)
         .on('error', (err) => downloadEmitter.emit('error', err))
         .on('close', (data) => cb(null, data));
-}, 1);
-
-const uploadQ = queue((task, cb) => {
-    const params = {
-        localFile: task.uploadPath,
-
-        s3Params: {
-            Bucket: task.s3Bucket,
-            Key: task.s3Key,
-        },
-    };
-
-    console.dir(params, { depth: null, colors: true });
-    console.dir(s3UploadClient, { depth: null, colors: true });
-
-    const upload = s3UploadClient.uploadFile(params);
-
-    upload.on('error', (err) => cb(err));
-
-    upload.on('end', (data) => cb(null, data));
 }, 1);
 
 const filesInPrefixOnCommercial = (bucket, prefix, cb) => {
@@ -131,75 +138,9 @@ const filesInPrefixOnCommercial = (bucket, prefix, cb) => {
     );
 };
 
-const filesInPrefixOnGov = (bucket, prefix, cb) => {
-    let keys = [];
-    let token;
-    let isTruncated = false;
-
-    function sortByProperty(property) {
-        return function (x, y) {
-            return x[property] === y[property] ? 0 : x[property] > y[property] ? 1 : -1;
-        };
-    }
-
-    const list = (obj, callback) => {
-        // console.dir(obj, { depth: null, colors: true });
-        callback = typeof obj === 'function' ? obj : callback;
-        callback = typeof callback === 'function' ? callback : () => {};
-        token = obj.token ? obj.token : null;
-        bucket = obj.bucket ? obj.bucket : null;
-        prefix = obj.prefix ? obj.prefix : null;
-
-        const params = {
-            Bucket: bucket,
-            ContinuationToken: token,
-            Prefix: prefix,
-        };
-
-        govS3.listObjectsV2(params, callback);
-    };
-
-    doWhilst(
-        (next) => {
-            list({ token, bucket, prefix }, (err, result) => {
-                if (err) return next(err);
-                if (result.IsTruncated) token = result.NextContinuationToken;
-                isTruncated = result.IsTruncated;
-                each(
-                    result.Contents,
-                    (row, cont) => {
-                        row.Bucket = bucket;
-                        row.Base = basename(row.Key);
-                        keys.push(row);
-                        cont();
-                    },
-                    (eachErr) => {
-                        if (eachErr) return next(eachErr);
-                        next();
-                    }
-                );
-            });
-        },
-        (cb) => cb(null, isTruncated),
-        (err, result) => {
-            if (err) return cb(err);
-            keys = keys.sort(sortByProperty('Key'));
-            cb(null, keys);
-        }
-    );
-};
-
 const filesInPrefixOnCommercialPromise = (bucket, prefix) =>
     new Promise((res, rej) => {
         filesInPrefixOnCommercial(bucket, prefix, (err, data) => {
-            if (err) return rej(err);
-            res(data);
-        });
-    });
-
-const filesInPrefixOnGovPromise = (bucket, prefix) =>
-    new Promise((res, rej) => {
-        filesInPrefixOnGov(bucket, prefix, (err, data) => {
             if (err) return rej(err);
             res(data);
         });
@@ -249,19 +190,19 @@ const promptForMissingOptions = async (options) => {
         });
     }
 
-    if (!options.GovBucket) {
-        questions.push({
-            type: 'input',
-            name: 'GovBucket',
-            message: 'What bucket in GovCloud to you want to copy prefix to?',
-        });
-    }
-
     if (!options.CommercialBucket) {
         questions.push({
             type: 'input',
             name: 'CommercialBucket',
             message: 'What bucket in Commercial AWS to you want to copy prefix from?',
+        });
+    }
+
+    if (!options.GovBucket) {
+        questions.push({
+            type: 'input',
+            name: 'GovBucket',
+            message: 'What bucket in GovCloud to you want to copy prefix to?',
         });
     }
 
@@ -286,60 +227,83 @@ const openDBConn = () =>
         });
     });
 
+const copyQ = queue((task, callback) => {
+    let uuid = uuidv4().replace(/-/g, '');
+    auto(
+        {
+            createDownloadDir: (cb) => {
+                let tempFolder = join(tmpdir(), uuid);
+                console.log(`creating ${tempFolder}`);
+                mkdir(tempFolder, (err) => {
+                    if (err) return cb(err);
+                    cb(null, tempFolder);
+                });
+            },
+            downloadFileHere: [
+                'createDownloadDir',
+                (results, cb) => {
+                    downloadQ.push({ s3Bucket: task.commBucket, s3Key: task.key.Key, downloadPath: join(results.createDownloadDir, task.key.Base) }, cb);
+                },
+            ],
+            uploadFileToGov: [
+                'createDownloadDir',
+                'downloadFileHere',
+                (results, cb) => {
+                    uploadEmitter.once(uuid, cb);
+                    if (upload.send) {
+                        upload.send({
+                            uuid: uuid,
+                            Bucket: task.govBucket,
+                            Key: task.key.Key,
+                            uploadPath: join(results.createDownloadDir, task.key.Base),
+                            cb: cb,
+                        });
+                    } else {
+                        return cb(new Error('Child Process Missing'));
+                    }
+                },
+            ],
+            removeDownloadDir: [
+                'createDownloadDir',
+                'downloadFileHere',
+                'uploadFileToGov',
+                (results, cb) => {
+                    console.log(`removing ${results.createDownloadDir}`);
+                    remove(results.createDownloadDir, cb);
+                },
+            ],
+        },
+        (err, results) => {
+            if (err) {
+                console.error(err);
+                task.dbConn.run(
+                    `INSERT INTO copyIssues (bucket, key, error) VALUES (?, ?, ?)`,
+                    [task.key.Bucket, task.key.Key, JSON.stringify(err, null, 2)],
+                    (dbErr) => {
+                        if (dbErr) console.error(dbErr);
+                        if (dbErr) return callback(err);
+                    }
+                );
+            }
+            callback();
+        }
+    );
+}, 10);
+
 const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn) =>
     new Promise((res, rej) => {
+        let totalBytes = keys.reduce((acc, cur) => acc + parseInt(cur.Size, 10), 0);
+        let copied = 0;
         each(
             keys,
             (key, next) => {
-                // console.dir(key, { depth: null, colors: true });
-                auto(
-                    {
-                        createDownloadDir: (cb) => {
-                            let tempFolder = join(tmpdir(), uuidv4().replace(/-/g, ''));
-                            console.log(`creating ${tempFolder}`);
-                            fs.mkdir(tempFolder, (err) => {
-                                if (err) return cb(err);
-                                cb(null, tempFolder);
-                            });
-                        },
-                        downloadFileHere: [
-                            'createDownloadDir',
-                            (results, cb) => {
-                                downloadQ.push({ s3Bucket: commBucket, s3Key: key.Key, downloadPath: join(results.createDownloadDir, key.Base) }, cb);
-                            },
-                        ],
-                        uploadFileToGov: [
-                            'createDownloadDir',
-                            'downloadFileHere',
-                            (results, cb) => {
-                                uploadQ.push({ s3Bucket: govBucket, s3Key: key.Key, uploadPath: join(results.createDownloadDir, key.Base) }, cb);
-                            },
-                        ],
-                        removeDownloadDir: [
-                            'createDownloadDir',
-                            'downloadFileHere',
-                            'uploadFileToGov',
-                            (results, cb) => {
-                                console.log(`removing ${results.createDownloadDir}`);
-                                fs.remove(results.createDownloadDir, cb);
-                            },
-                        ],
-                    },
-                    (err, results) => {
-                        if (err) {
-                            console.error(err);
-                            dbConn.run(
-                                `INSERT INTO copyIssues (bucket, key, error) VALUES (?, ?, ?)`,
-                                [key.Bucket, key.Key, JSON.stringify(err, null, 2)],
-                                (dbErr) => {
-                                    if (dbErr) console.error(dbErr);
-                                    if (dbErr) return next(err);
-                                }
-                            );
-                        }
-                        next();
-                    }
-                );
+                copyQ.push({ commBucket, govBucket, key, dbConn }, (err) => {
+                    if (err) return next(err);
+                    copied += key.Size;
+                    let percent = totalBytes ? Math.floor((copied / totalBytes) * 100) : 0;
+                    console.log(`${percent}% completed`);
+                    next();
+                });
             },
             (err) => {
                 if (err) return rej(err);
@@ -349,6 +313,7 @@ const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn) =>
     });
 
 const main = async () => {
+    startUpload();
     let options = parseArgsIntoOptions(process.argv);
     if (options.help) printHelp();
     try {
@@ -363,16 +328,13 @@ const main = async () => {
             'Bytes'
         );
 
-        // let gkeys = await filesInPrefixOnGovPromise(options.CommercialBucket, options.prefix);
-        // console.log(gkeys.length);
-        // console.log(
-        //     gkeys.reduce((acc, cur) => acc + parseInt(cur.Size, 10), 0),
-        //     'Bytes'
-        // );
-
         await copyKeysFromCommToGov(options.CommercialBucket, options.GovBucket, ckeys, dbconn);
+        dbconn.close();
+        killUpload();
     } catch (e) {
         console.error(e);
+        dbconn.close();
+        killUpload();
         process.exit(1);
     }
 };
