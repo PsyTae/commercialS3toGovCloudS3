@@ -9,7 +9,7 @@
 
 const EventEmitter = require('events');
 class UploadEmitter extends EventEmitter {}
-const { tmpdir } = require('os');
+const { tmpdir, EOL } = require('os');
 const { basename, join } = require('path');
 const { spawn } = require('child_process');
 const arg = require('arg');
@@ -23,6 +23,8 @@ const sqlite3 = require('sqlite3').verbose();
 const commCreds = new aws.Credentials(require('./commercialCreds.json'));
 
 const commS3 = new aws.S3({ apiVersion: '2006-03-01', region: 'us-east-1', signatureVersion: 'v4', credentials: commCreds });
+
+const progress = createWriteStream('./progress.txt');
 
 let upload = false;
 const uploadEmitter = new UploadEmitter();
@@ -303,13 +305,16 @@ const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn) =>
             (key, next) => {
                 copyQ.push({ commBucket, govBucket, key, dbConn }, err => {
                     if (err) return next(err);
+                    let previousPercent = totalBytes ? Math.floor((copied / totalBytes) * 100) : 0;
                     copied += key.Size;
                     let percent = totalBytes ? Math.floor((copied / totalBytes) * 100) : 0;
                     console.log(`${percent}% completed`);
+                    if (percent > previousPercent) progress.write(`${new Date().toUTCString()}|${percent}% Complete${EOL}`);
                     next();
                 });
             },
             err => {
+                progress.end();
                 if (err) return rej(err);
                 res();
             }
