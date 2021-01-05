@@ -71,6 +71,8 @@ const downloadQ = queue((task, cb) => {
         Bucket: task.s3Bucket,
         Key: task.s3Key
     };
+    console.log(`Downloading Bucket: '${task.s3Bucket}', Key: '${task.s3Key}' to ${task.downloadPath}`);
+
     const fileStream = createWriteStream(task.downloadPath);
     const s3Stream = commS3.getObject(params).createReadStream();
 
