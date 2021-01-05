@@ -8,7 +8,6 @@
  */
 
 const EventEmitter = require('events');
-class DownloadEmitter extends EventEmitter {}
 class UploadEmitter extends EventEmitter {}
 const { tmpdir } = require('os');
 const { basename, join } = require('path');
@@ -32,12 +31,12 @@ const uploadEmitter = new UploadEmitter();
 const startUpload = () => {
     upload = spawn('node', [join(__dirname, 'upload.js')], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-        windowsHide: true,
+        windowsHide: true
     });
-    upload.stdout.on('data', (data) => console.log('[upload]', data.toString()));
-    upload.stderr.on('data', (data) => console.error('[upload]', data.toString()));
+    upload.stdout.on('data', data => console.log('[upload]', data.toString()));
+    upload.stderr.on('data', data => console.error('[upload]', data.toString()));
 
-    upload.on('message', (msg) => {
+    upload.on('message', msg => {
         uploadEmitter.emit(msg.uuid, msg.callback);
         // uploadQ.resume();
     });
@@ -62,22 +61,25 @@ const killUpload = () => {
 };
 
 const downloadQ = queue((task, cb) => {
-    const downloadEmitter = new DownloadEmitter();
-    downloadEmitter.once('error', (err) => cb(err));
+    let e = false;
+    const handleStreamError = err => {
+        e = true;
+        return cb(err);
+    };
 
     const params = {
         Bucket: task.s3Bucket,
-        Key: task.s3Key,
+        Key: task.s3Key
     };
     const fileStream = createWriteStream(task.downloadPath);
     const s3Stream = commS3.getObject(params).createReadStream();
 
-    s3Stream.on('error', (err) => downloadEmitter.emit('error', err));
+    fileStream.on('error', err => handleStreamError(err));
+    s3Stream.on('error', err => handleStreamError(err));
 
-    s3Stream
-        .pipe(fileStream)
-        .on('error', (err) => downloadEmitter.emit('error', err))
-        .on('close', (data) => cb(null, data));
+    s3Stream.pipe(fileStream).on('close', data => {
+        if (!e) cb(null, data);
+    });
 }, 1);
 
 const filesInPrefixOnCommercial = (bucket, prefix, cb) => {
@@ -102,14 +104,14 @@ const filesInPrefixOnCommercial = (bucket, prefix, cb) => {
         const params = {
             Bucket: bucket,
             ContinuationToken: token,
-            Prefix: prefix,
+            Prefix: prefix
         };
 
         commS3.listObjectsV2(params, callback);
     };
 
     doWhilst(
-        (next) => {
+        next => {
             list({ token, bucket, prefix }, (err, result) => {
                 if (err) return next(err);
                 if (result.IsTruncated) token = result.NextContinuationToken;
@@ -122,14 +124,14 @@ const filesInPrefixOnCommercial = (bucket, prefix, cb) => {
                         keys.push(row);
                         cont();
                     },
-                    (eachErr) => {
+                    eachErr => {
                         if (eachErr) return next(eachErr);
                         next();
                     }
                 );
             });
         },
-        (cb) => cb(null, isTruncated),
+        cb => cb(null, isTruncated),
         (err, result) => {
             if (err) return cb(err);
             keys = keys.sort(sortByProperty('Key'));
@@ -146,7 +148,7 @@ const filesInPrefixOnCommercialPromise = (bucket, prefix) =>
         });
     });
 
-const parseArgsIntoOptions = (rawArgs) => {
+const parseArgsIntoOptions = rawArgs => {
     const args = arg(
         {
             '--help': Boolean,
@@ -157,15 +159,15 @@ const parseArgsIntoOptions = (rawArgs) => {
             '-h': '--help',
             '-p': '--prefix',
             '-g': '--GovBucket',
-            '-c': '--CommercialBucket',
+            '-c': '--CommercialBucket'
         },
         {
-            argv: rawArgs.slice(2),
+            argv: rawArgs.slice(2)
         }
     );
     return {
         help: args['--help'] || false,
-        prefix: args['--prefix'] || null,
+        prefix: args['--prefix'] || null
     };
 };
 
@@ -179,14 +181,14 @@ Available Arguments:
     process.exit(0);
 };
 
-const promptForMissingOptions = async (options) => {
+const promptForMissingOptions = async options => {
     const questions = [];
 
     if (!options.prefix) {
         questions.push({
             type: 'input',
             name: 'prefix',
-            message: 'What is the prefix to be copied from Commercial to Gov Cloud?',
+            message: 'What is the prefix to be copied from Commercial to Gov Cloud?'
         });
     }
 
@@ -194,7 +196,7 @@ const promptForMissingOptions = async (options) => {
         questions.push({
             type: 'input',
             name: 'CommercialBucket',
-            message: 'What bucket in Commercial AWS to you want to copy prefix from?',
+            message: 'What bucket in Commercial AWS to you want to copy prefix from?'
         });
     }
 
@@ -202,7 +204,7 @@ const promptForMissingOptions = async (options) => {
         questions.push({
             type: 'input',
             name: 'GovBucket',
-            message: 'What bucket in GovCloud to you want to copy prefix to?',
+            message: 'What bucket in GovCloud to you want to copy prefix to?'
         });
     }
 
@@ -212,15 +214,15 @@ const promptForMissingOptions = async (options) => {
         ...options,
         prefix: options.prefix || answers.prefix,
         GovBucket: options.GovBucket || answers.GovBucket,
-        CommercialBucket: options.CommercialBucket || answers.CommercialBucket,
+        CommercialBucket: options.CommercialBucket || answers.CommercialBucket
     };
 };
 
 const openDBConn = () =>
     new Promise((res, rej) => {
-        let dbConn = new sqlite3.Database(join(__dirname, 'issues.db'), sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+        let dbConn = new sqlite3.Database(join(__dirname, 'issues.db'), sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, err => {
             if (err) return rej(err);
-            dbConn.exec(`CREATE TABLE IF NOT EXISTS copyIssues (bucket VARCHAR(50), key VARCHAR(500), error MEDIUMTEXT)`, (err) => {
+            dbConn.exec(`CREATE TABLE IF NOT EXISTS copyIssues (bucket VARCHAR(50), key VARCHAR(500), error MEDIUMTEXT)`, err => {
                 if (err) return rej(err);
                 res(dbConn);
             });
@@ -231,10 +233,10 @@ const copyQ = queue((task, callback) => {
     let uuid = uuidv4().replace(/-/g, '');
     auto(
         {
-            createDownloadDir: (cb) => {
+            createDownloadDir: cb => {
                 let tempFolder = join(tmpdir(), uuid);
                 console.log(`creating ${tempFolder}`);
-                mkdir(tempFolder, (err) => {
+                mkdir(tempFolder, err => {
                     if (err) return cb(err);
                     cb(null, tempFolder);
                 });
@@ -243,7 +245,7 @@ const copyQ = queue((task, callback) => {
                 'createDownloadDir',
                 (results, cb) => {
                     downloadQ.push({ s3Bucket: task.commBucket, s3Key: task.key.Key, downloadPath: join(results.createDownloadDir, task.key.Base) }, cb);
-                },
+                }
             ],
             uploadFileToGov: [
                 'createDownloadDir',
@@ -256,12 +258,12 @@ const copyQ = queue((task, callback) => {
                             Bucket: task.govBucket,
                             Key: task.key.Key,
                             uploadPath: join(results.createDownloadDir, task.key.Base),
-                            cb: cb,
+                            cb: cb
                         });
                     } else {
                         return cb(new Error('Child Process Missing'));
                     }
-                },
+                }
             ],
             removeDownloadDir: [
                 'createDownloadDir',
@@ -270,8 +272,8 @@ const copyQ = queue((task, callback) => {
                 (results, cb) => {
                     console.log(`removing ${results.createDownloadDir}`);
                     remove(results.createDownloadDir, cb);
-                },
-            ],
+                }
+            ]
         },
         (err, results) => {
             if (err) {
@@ -279,7 +281,7 @@ const copyQ = queue((task, callback) => {
                 task.dbConn.run(
                     `INSERT INTO copyIssues (bucket, key, error) VALUES (?, ?, ?)`,
                     [task.key.Bucket, task.key.Key, JSON.stringify(err, null, 2)],
-                    (dbErr) => {
+                    dbErr => {
                         if (dbErr) console.error(dbErr);
                         if (dbErr) return callback(err);
                     }
@@ -297,7 +299,7 @@ const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn) =>
         each(
             keys,
             (key, next) => {
-                copyQ.push({ commBucket, govBucket, key, dbConn }, (err) => {
+                copyQ.push({ commBucket, govBucket, key, dbConn }, err => {
                     if (err) return next(err);
                     copied += key.Size;
                     let percent = totalBytes ? Math.floor((copied / totalBytes) * 100) : 0;
@@ -305,7 +307,7 @@ const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn) =>
                     next();
                 });
             },
-            (err) => {
+            err => {
                 if (err) return rej(err);
                 res();
             }
