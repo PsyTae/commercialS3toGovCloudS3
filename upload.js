@@ -4,6 +4,8 @@ const govCreds = new aws.Credentials(require('./govCreds.json'));
 const govEndPoint = new aws.Endpoint('s3-fips.us-gov-east-1.amazonaws.com');
 const govS3 = new aws.S3({ apiVersion: '2006-03-01', region: 'us-gov-east-1', endpoint: govEndPoint, signatureVersion: 'v4', credentials: govCreds });
 
+const queueDepth = 10;
+
 const s3Upload = require('s3-upload-resume');
 
 const s3UploadClient = s3Upload.createClient({
@@ -57,7 +59,7 @@ const uploadQ = queue((task, cb) => {
             });
         }
     });
-}, 1);
+}, queueDepth);
 
 process.on('message', msg => {
     uploadQ.push({ uuid: msg.uuid, s3Bucket: msg.Bucket, s3Key: msg.Key, uploadPath: msg.uploadPath }, msg.cb);

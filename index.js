@@ -24,6 +24,8 @@ const commCreds = new aws.Credentials(require('./commercialCreds.json'));
 
 const commS3 = new aws.S3({ apiVersion: '2006-03-01', region: 'us-east-1', signatureVersion: 'v4', credentials: commCreds });
 
+const queueDepth = 10;
+
 const progress = createWriteStream('./progress.txt');
 progress.write(`date|time|PercentInt|PercentString${EOL}`);
 
@@ -107,7 +109,7 @@ const downloadQ = queue((task, cb) => {
     s3Stream.pipe(fileStream).on('close', data => {
         if (!e) cb(null, data);
     });
-}, 1);
+}, queueDepth);
 
 const filesInPrefixOnCommercial = (bucket, prefix, cb) => {
     let keys = [];
@@ -317,7 +319,7 @@ const copyQ = queue((task, callback) => {
             callback();
         }
     );
-}, 10);
+}, queueDepth);
 
 const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn) =>
     new Promise((res, rej) => {
