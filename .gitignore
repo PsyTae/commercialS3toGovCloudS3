@@ -134,8 +134,6 @@ evo-hd
 
 *progress.txt
 
-progress.xlsx
+*progress.xlsx
 
-~$progress.xlsx
-
-issues.db
+*issues.db

@@ -256,9 +256,9 @@ const promptForMissingOptions = async options => {
     };
 };
 
-const openDBConn = () =>
+const openDBConn = prefix =>
     new Promise((res, rej) => {
-        let dbConn = new sqlite3.Database(join(__dirname, 'issues.db'), sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, err => {
+        let dbConn = new sqlite3.Database(join(__dirname, `${prefix}-issues.db`), sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, err => {
             if (err) return rej(err);
             dbConn.exec(`CREATE TABLE IF NOT EXISTS copyIssues (bucket VARCHAR(50), key VARCHAR(500), error MEDIUMTEXT)`, err => {
                 if (err) return rej(err);
@@ -362,7 +362,8 @@ const main = async () => {
     try {
         options = await promptForMissingOptions(options);
         if (!options.prefix) throw new Error('No Prefix Provided in Arguments or at Prompt');
-        let dbconn = await openDBConn();
+
+        let dbconn = await openDBConn(options.prefix);
 
         const moveProgress = new MoveProgress(options.prefix);
         moveProgress.writeLine(0, 'Done Requesting Parameters');
