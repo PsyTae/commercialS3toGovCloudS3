@@ -25,6 +25,29 @@ const commCreds = new aws.Credentials(require('./commercialCreds.json'));
 const commS3 = new aws.S3({ apiVersion: '2006-03-01', region: 'us-east-1', signatureVersion: 'v4', credentials: commCreds });
 
 const progress = createWriteStream('./progress.txt');
+progress.write(`date|time|PercentInt|PercentString${EOL}`);
+
+const writeLine = percent => {
+    let now = new Date();
+    let dateFormatter = new Intl.DateTimeFormat('en-us', {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric'
+    });
+    let timeFormatter = new Intl.DateTimeFormat('en-us', {
+        hour: 'numeric',
+        minute: 'numeric',
+        second: 'numeric',
+        fractionalSecondDigits: 3,
+        hour12: false,
+        timeZone: 'UTC'
+    });
+    let date = dateFormatter.format(now);
+    let time = timeFormatter.format(now);
+    progress.write(`${date}|${time}|${percent}|${percent}% Complete${EOL}`);
+};
+
+writeLine(0);
 
 let upload = false;
 const uploadEmitter = new UploadEmitter();
@@ -309,7 +332,7 @@ const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn) =>
                     copied += key.Size;
                     let percent = totalBytes ? Math.floor((copied / totalBytes) * 100) : 0;
                     console.log(`${percent}% completed`);
-                    if (percent > previousPercent) progress.write(`${new Date().toUTCString()}|${percent}% Complete${EOL}`);
+                    if (percent > previousPercent) writeLine(percent);
                     next();
                 });
             },

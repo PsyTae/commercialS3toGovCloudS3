@@ -131,3 +131,11 @@ evo-hd
 
 *creds*.*
 *Creds*.*
+
+progress.txt
+
+progress.xlsx
+
+~$progress.xlsx
+
+issues.db
