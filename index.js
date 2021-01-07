@@ -196,17 +196,19 @@ const parseArgsIntoOptions = rawArgs => {
     );
     return {
         help: args['--help'] || false,
-        prefix: args['--prefix'] || null
+        prefix: args['--prefix'] || null,
+        CommercialBucket: args['--CommercialBucket'] || null,
+        GovBucket: args['--GovBucket'] || null
     };
 };
 
 const printHelp = () => {
-    console.log(`This program is designed to
+    console.log(`This program is designed to move objects in a Commercial S3 Bucket with specific prefix to a govcloud bucket with that same prefix
 Available Arguments:
     --help              -h  show arguments that can be used with this executable
     --prefix            -p  provide the prefix wanting to be copied from commercial to gov cloud
-    --GovBucket         -g  Bucket to copy prefix to in Gov Cloud
-    --CommercialBucket  -c  Bucket to copy prefix from in Commercial`);
+    --CommercialBucket  -c  Bucket to copy prefix from in Commercial
+    --GovBucket         -g  Bucket to copy prefix to in Gov Cloud`);
     process.exit(0);
 };
 
