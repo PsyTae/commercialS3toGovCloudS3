@@ -9,7 +9,7 @@ const s3Upload = require('s3-upload-resume');
 const s3UploadClient = s3Upload.createClient({
     multipartUploadThreshold: 5 * 1024 * 1024,
     multipartUploadSize: 5 * 1024 * 1024,
-    s3Client: govS3,
+    s3Client: govS3
 });
 
 const uploadQ = queue((task, cb) => {
@@ -18,13 +18,13 @@ const uploadQ = queue((task, cb) => {
 
         s3Params: {
             Bucket: task.s3Bucket,
-            Key: task.s3Key,
-        },
+            Key: task.s3Key
+        }
     };
 
     const upload = s3UploadClient.uploadFile(params);
 
-    upload.on('uploading', (data) => {
+    upload.on('uploading', data => {
         switch (data) {
             case 'putting':
                 console.log(`Putting ${upload.localFile} to Bucket: '${upload.s3Bucket}', Key: '${upload.s3Key}'`);
@@ -40,30 +40,30 @@ const uploadQ = queue((task, cb) => {
         }
     });
 
-    upload.on('error', (err) => {
+    upload.on('error', err => {
         if (process.send) {
             process.send({
                 uuid: task.uuid,
-                callback: cb(err),
+                callback: cb(err)
             });
         }
     });
 
-    upload.on('end', (data) => {
+    upload.on('end', data => {
         if (process.send) {
             process.send({
                 uuid: task.uuid,
-                callback: cb(null, data),
+                callback: cb(null, data)
             });
         }
     });
 }, 1);
 
-process.on('message', (msg) => {
+process.on('message', msg => {
     uploadQ.push({ uuid: msg.uuid, s3Bucket: msg.Bucket, s3Key: msg.Key, uploadPath: msg.uploadPath }, msg.cb);
 });
 
-process.once('uncaughtException', (err) => {
+process.once('uncaughtException', err => {
     console.error(`Uncaught Exception Error:`, '\n', err);
     process.exit(1);
 });
