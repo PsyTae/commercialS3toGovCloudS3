@@ -374,9 +374,9 @@ const main = async () => {
 
         moveProgress.writeLine(
             0,
-            `Found all Objects in Commercial Bucket '${options.CommercialBucket}': ${ckeys.length} ${ckeys.length === 1 ? `Object` : `Objects`}, ${bytes} ${
-                bytes === 1 ? `Bytes` : `Byte`
-            }`
+            `Found all Objects in Commercial Bucket '${options.CommercialBucket}', Prefix: '${options.prefix}': ${ckeys.length} ${
+                ckeys.length === 1 ? `Object` : `Objects`
+            }, ${bytes} ${bytes === 1 ? `Bytes` : `Byte`}`
         );
         await copyKeysFromCommToGov(options.CommercialBucket, options.GovBucket, ckeys, dbconn, moveProgress);
         dbconn.close();
