@@ -26,30 +26,37 @@ const commS3 = new aws.S3({ apiVersion: '2006-03-01', region: 'us-east-1', signa
 
 const queueDepth = 10;
 
-const progress = createWriteStream('./progress.txt');
-progress.write(`date|time|PercentInt|PercentString${EOL}`);
+const MoveProgress = class {
+    constructor(prefix) {
+        this.prefix = prefix;
+        this.stream = createWriteStream(`${prefix}-progress.txt`);
+        this.stream.write(`date|time|PercentInt|PercentString|AdditionalInfo${EOL}`);
+    }
 
-const writeLine = percent => {
-    let now = new Date();
-    let dateFormatter = new Intl.DateTimeFormat('en-us', {
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric'
-    });
-    let timeFormatter = new Intl.DateTimeFormat('en-us', {
-        hour: 'numeric',
-        minute: 'numeric',
-        second: 'numeric',
-        fractionalSecondDigits: 3,
-        hour12: false,
-        timeZone: 'UTC'
-    });
-    let date = dateFormatter.format(now);
-    let time = timeFormatter.format(now);
-    progress.write(`${date}|${time}|${percent}|${percent}% Complete${EOL}`);
+    writeLine(percent, addInfo) {
+        let now = new Date();
+        let dateFormatter = new Intl.DateTimeFormat('en-us', {
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric'
+        });
+        let timeFormatter = new Intl.DateTimeFormat('en-us', {
+            hour: 'numeric',
+            minute: 'numeric',
+            second: 'numeric',
+            fractionalSecondDigits: 3,
+            hour12: false,
+            timeZone: 'UTC'
+        });
+        let date = dateFormatter.format(now);
+        let time = timeFormatter.format(now);
+        this.stream.write(`${date}|${time}|${percent}|${percent}% Complete${addInfo ? `|${addInfo}` : ''}${EOL}`);
+    }
+
+    end() {
+        this.stream.end();
+    }
 };
-
-writeLine(0);
 
 let upload = false;
 const uploadEmitter = new UploadEmitter();
@@ -323,7 +330,7 @@ const copyQ = queue((task, callback) => {
     );
 }, queueDepth);
 
-const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn) =>
+const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn, progressFile) =>
     new Promise((res, rej) => {
         let totalBytes = keys.reduce((acc, cur) => acc + parseInt(cur.Size, 10), 0);
         let copied = 0;
@@ -336,12 +343,12 @@ const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn) =>
                     copied += key.Size;
                     let percent = totalBytes ? Math.floor((copied / totalBytes) * 100) : 0;
                     console.log(`${percent}% completed`);
-                    if (percent > previousPercent) writeLine(percent);
+                    if (percent > previousPercent) progressFile.writeLine(percent);
                     next();
                 });
             },
             err => {
-                progress.end();
+                progressFile.end();
                 if (err) return rej(err);
                 res();
             }
@@ -357,14 +364,21 @@ const main = async () => {
         if (!options.prefix) throw new Error('No Prefix Provided in Arguments or at Prompt');
         let dbconn = await openDBConn();
 
-        let ckeys = await filesInPrefixOnCommercialPromise(options.CommercialBucket, options.prefix);
-        console.log(ckeys.length);
-        console.log(
-            ckeys.reduce((acc, cur) => acc + parseInt(cur.Size, 10), 0),
-            'Bytes'
-        );
+        const moveProgress = new MoveProgress(options.prefix);
+        moveProgress.writeLine(0, 'Done Requesting Parameters');
 
-        await copyKeysFromCommToGov(options.CommercialBucket, options.GovBucket, ckeys, dbconn);
+        let ckeys = await filesInPrefixOnCommercialPromise(options.CommercialBucket, options.prefix);
+        const bytes = ckeys.reduce((acc, cur) => acc + parseInt(cur.Size, 10), 0);
+        console.log(ckeys.length);
+        console.log(bytes, 'Bytes');
+
+        moveProgress.writeLine(
+            0,
+            `Found all Objects in Commercial Bucket '${options.CommercialBucket}': ${ckeys.length} ${ckeys.length === 1 ? `Object` : `Objects`}, ${bytes} ${
+                bytes === 1 ? `Bytes` : `Byte`
+            }`
+        );
+        await copyKeysFromCommToGov(options.CommercialBucket, options.GovBucket, ckeys, dbconn, moveProgress);
         dbconn.close();
         killUpload();
     } catch (e) {
