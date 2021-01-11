@@ -59,7 +59,7 @@ const uploadQ = queue((task, cb) => {
             });
         }
     });
-}, queueDepth);
+}, 2);
 
 process.on('message', msg => {
     uploadQ.push({ uuid: msg.uuid, s3Bucket: msg.Bucket, s3Key: msg.Key, uploadPath: msg.uploadPath }, msg.cb);

@@ -29,7 +29,7 @@ const queueDepth = 10;
 const MoveProgress = class {
     constructor(prefix) {
         this.prefix = prefix;
-        this.stream = createWriteStream(`${prefix}-progress.txt`);
+        this.stream = createWriteStream(`${prefix.replace(/\/|\\/g, '-')}-progress.txt`);
         this.stream.write(`date|time|PercentInt|PercentString|AdditionalInfo${EOL}`);
     }
 
@@ -116,7 +116,7 @@ const downloadQ = queue((task, cb) => {
     s3Stream.pipe(fileStream).on('close', data => {
         if (!e) cb(null, data);
     });
-}, queueDepth);
+}, 2);
 
 const filesInPrefixOnCommercial = (bucket, prefix, cb) => {
     let keys = [];
@@ -258,7 +258,7 @@ const promptForMissingOptions = async options => {
 
 const openDBConn = prefix =>
     new Promise((res, rej) => {
-        let dbConn = new sqlite3.Database(join(__dirname, `${prefix}-issues.db`), sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, err => {
+        let dbConn = new sqlite3.Database(join(__dirname, `${prefix.replace(/\/|\\/g, '-')}-issues.db`), sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, err => {
             if (err) return rej(err);
             dbConn.exec(`CREATE TABLE IF NOT EXISTS copyIssues (bucket VARCHAR(50), key VARCHAR(500), error MEDIUMTEXT)`, err => {
                 if (err) return rej(err);
@@ -355,7 +355,22 @@ const copyKeysFromCommToGov = (commBucket, govBucket, keys, dbConn, progressFile
         );
     });
 
+const durationInDHMS = ms => {
+    const pad = n => (n < 10 ? '0' + n : n);
+    const msAfterDays = ms % (24 * 60 * 60 * 1000);
+    const msAfterHours = ms % (60 * 60 * 1000);
+    const msAfterMinutes = ms % (60 * 1000);
+    const msAfterSeconds = ms % 1000;
+
+    const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+    const hours = Math.floor(msAfterDays / (60 * 60 * 1000));
+    const minutes = Math.floor(msAfterHours / (60 * 1000));
+    const seconds = Math.floor(msAfterMinutes / 1000);
+    return `${pad(days)} days, ${pad(hours)} hours, ${pad(minutes)} minutes, ${pad(seconds)}.${msAfterSeconds} seconds`;
+};
+
 const main = async () => {
+    let start = new Date().getTime();
     startUpload();
     let options = parseArgsIntoOptions(process.argv);
     if (options.help) printHelp();
@@ -380,6 +395,8 @@ const main = async () => {
             }, ${bytes} ${bytes === 1 ? `Bytes` : `Byte`}`
         );
         await copyKeysFromCommToGov(options.CommercialBucket, options.GovBucket, ckeys, dbconn, moveProgress);
+        let finish = new Date().getTime();
+        console.log(`took ${durationInDHMS(finish - start)}`);
         dbconn.close();
         killUpload();
     } catch (e) {
